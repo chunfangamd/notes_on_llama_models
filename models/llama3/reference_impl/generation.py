@@ -69,8 +69,8 @@ class Llama:
     @staticmethod
     def build(
         ckpt_dir: str,
-        max_seq_len: int,
-        max_batch_size: int,
+        max_seq_len: int,       # 511
+        max_batch_size: int,    # 4
         model_parallel_size: Optional[int] = None,
         tokenizer_path: Optional[str] = None,
         seed: int = 1,
@@ -98,15 +98,15 @@ class Llama:
             This method initializes the distributed process group, sets the device to CUDA,
             and loads the pre-trained model and tokenizer.
         """
-
+        ##########################################################################
+        # What are the JAX correspondences for the following PyTorch functions?  #
+        ##########################################################################
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group("nccl")
-
         if not model_parallel_is_initialized():
             if model_parallel_size is None:
                 model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
             initialize_model_parallel(model_parallel_size)
-
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         torch.cuda.set_device(local_rank)
 
@@ -128,8 +128,8 @@ class Llama:
             params = json.loads(f.read())
 
         model_args: ModelArgs = ModelArgs(
-            max_seq_len=max_seq_len,
-            max_batch_size=max_batch_size,
+            max_seq_len=max_seq_len,  # 512
+            max_batch_size=max_batch_size,  # 4
             **params,
         )
         if tokenizer_path:
@@ -171,6 +171,25 @@ class Llama:
         echo: bool = False,
         print_model_input: bool = False,
     ) -> Generator:
+        """
+        Example inputs:
+            model_input = ModelInput(
+                tokens=[
+                    101, 201, 202, 203, 204, 205, 206, 207, 208, 209,  # "This is a text."
+                    128256,                                            # <|image|>
+                    301, 302, 303, 304, 305, 306, 307, 308, 309,       # "Another text."
+                    128256                                             # <|image|>
+                ],
+                vision=VisionInput(
+                    mask=[[10, 20], [20, 21]],
+                    images=[
+                        <PIL.Image.Image object at 0x...>,             # ImageMedia(image=URL(uri="file:///path/to/image.jpg"))
+                        <PIL.Image.Image object at 0x...>              # ImageMedia(image=URL(uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA..."))
+                    ]
+                )
+            )
+            max_gen_len = 511
+        """
         params = self.model.params
 
         if print_model_input:
@@ -187,8 +206,8 @@ class Llama:
         bsz = 1
         assert bsz <= params.max_batch_size, (bsz, params.max_batch_size)
 
-        min_prompt_len = min(len(t) for t in prompt_tokens)
-        max_prompt_len = max(len(t) for t in prompt_tokens)
+        min_prompt_len = min(len(t) for t in prompt_tokens)  # 21
+        max_prompt_len = max(len(t) for t in prompt_tokens)  # 21
 
         if max_prompt_len >= params.max_seq_len:
             cprint(
@@ -196,24 +215,32 @@ class Llama:
             )
             return
 
-        total_len = min(max_gen_len + max_prompt_len, params.max_seq_len)
+        total_len = min(max_gen_len + max_prompt_len, params.max_seq_len)  # min((511-1)+21, 511) = 511
 
         is_vision = not isinstance(self.model, Transformer)
         if is_vision:
-            images = model_input.vision.images if model_input.vision is not None else []
-            mask = model_input.vision.mask if model_input.vision is not None else []
+            images = model_input.vision.images if model_input.vision is not None else []  # [<PIL.Image.Image object at 0x...>, <PIL.Image.Image object at 0x...>]
+            mask = model_input.vision.mask if model_input.vision is not None else []      # [[10, 20], [20, 21]]
 
             # the method works for bsz > 1 so add a batch dimension
             xattn_caches, cross_attention_masks, full_text_row_masked_out_mask = (
                 self.model.compute_vision_tokens_masks(
-                    batch_images=[images],
-                    batch_masks=[mask],
-                    total_len=total_len,
+                    batch_images=[images],  # [[<PIL.Image.Image object at 0x...>, <PIL.Image.Image object at 0x...>]]
+                    batch_masks=[mask],     # [[[10, 20], [20, 21]]]
+                    total_len=total_len,    # 511
                 )
             )
+            print(f"xattn_caches: {xattn_caches.shape}")
+            print(f"cross_attention_masks: {cross_attention_masks.shape}")
+            print(f"full_text_row_masked_out_mask: {full_text_row_masked_out_mask.shape}")
 
+            # xattn_caches: torch.Size([8, 2, 1, 32, 6404, 128])
+            # cross_attention_masks: torch.Size([1, 1, 512, 6404])
+            # full_text_row_masked_out_mask: torch.Size([1, 1, 512, 1])
+
+        # Prepare inputs to the text generation model
         pad_id = self.tokenizer.pad_id
-        tokens = torch.full((bsz, total_len), pad_id, dtype=torch.long, device="cuda")
+        tokens = torch.full((bsz, total_len), pad_id, dtype=torch.long, device="cuda")  # torch.Size([1, 511])
         for k, t in enumerate(prompt_tokens):
             tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device="cuda")
         if logprobs:
@@ -221,7 +248,7 @@ class Llama:
 
         prev_pos = 0
         eos_reached = torch.tensor([False] * bsz, device="cuda")
-        input_text_mask = tokens != pad_id
+        input_text_mask = tokens != pad_id  # [True_0, ..., True_20, False_21, ..., False_511]
 
         if echo:
             for i, t in enumerate(model_input.tokens):
@@ -234,19 +261,23 @@ class Llama:
                 )
 
         stop_tokens = torch.tensor(self.tokenizer.stop_tokens)
-        for cur_pos in range(min_prompt_len, total_len):
+        # for cur_pos in range(min_prompt_len, total_len):
+        for cur_pos in range(min_prompt_len, min_prompt_len+1):
             if is_vision:
+                print("----------------------------")
+                print(f"prev_pos: {prev_pos}, cur_pos: {cur_pos}")
                 position_ids = torch.arange(
                     prev_pos, cur_pos, dtype=torch.long, device="cuda"
-                )
+                )  # when prev_pos=0, cur_pos=21, position_ids = [0, 1, ..., 20]
+                print(f"position_ids: {position_ids}")
                 text_only_inference = model_input.vision is None
-                logits = self.model.forward(
+                logits = self.model.forward(    # <--
                     position_ids,
                     tokens,
                     cross_attention_masks,
                     full_text_row_masked_out_mask,
                     xattn_caches,
-                    text_only_inference,
+                    text_only_inference,  # False
                 )
             else:
                 logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos)
@@ -301,12 +332,16 @@ class Llama:
             if all(eos_reached):
                 break
 
+    #  content = [
+    #       ImageMedia(image=img),
+    #       "If I had to write a haiku for this one",
+    #   ]
     def text_completion(
         self,
-        content: InterleavedTextMedia,
+        content: InterleavedTextMedia,  # content: List[Union[str, ImageMedia]], e.g. content = [ImageMedia(image=img), "If I had to write a haiku for this one"]
         temperature: float = 0.6,
         top_p: float = 0.9,
-        max_gen_len: Optional[int] = None,
+        max_gen_len: Optional[int] = None,  # 511
         logprobs: bool = False,
         echo: bool = False,
     ) -> CompletionPrediction:
@@ -315,26 +350,45 @@ class Llama:
             or max_gen_len == 0
             or max_gen_len >= self.model.params.max_seq_len
         ):
-            max_gen_len = self.model.params.max_seq_len - 1
+            max_gen_len = self.model.params.max_seq_len - 1 # 512-1=511
 
         model_input = self.formatter.encode_content(content)
+        #
+        # To Do: Fix the below example
+        #
+        # E.g., model_input = ModelInput(
+        #         tokens=[
+        #             101, 201, 202, 203, 204, 205, 206, 207, 208, 209,  # What color are these llamas?
+        #             128256,                                            # <|image|> 
+        #             301, 302, 303, 304, 305, 306, 307, 308, 309,       # "Where are these llamas."
+        #             128256                                             # <|image|>
+        #         ],
+        #         vision=VisionInput(
+        #             mask=[[10, 20], [20, 21]],
+        #             images=[
+        #                 <PIL.Image.Image object at 0x...>, 
+        #                 <PIL.Image.Image object at 0x...>
+        #             ]
+        #         )
+        #     )
 
-        tokens = []
-        token_logprobs = []
-        decoded_tokens = []
-        for result in self.generate(
+        generated_results = self.generate(
             model_input=model_input,
-            max_gen_len=max_gen_len,
+            max_gen_len=max_gen_len,  # 511
             temperature=temperature,
             top_p=top_p,
             logprobs=logprobs,
             echo=echo,
-        ):
+        )
+
+        tokens = []
+        token_logprobs = []
+        decoded_tokens = []
+        for result in generated_results:
             tokens.append(result.token)
             if logprobs:
                 decoded_tokens.append(result.text)
                 token_logprobs.append(result.logprobs)
-
         generation = self.tokenizer.decode(tokens)
         if logprobs:
             return CompletionPrediction(

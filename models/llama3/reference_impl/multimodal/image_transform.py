@@ -32,7 +32,7 @@ class VariableSizeImageTransform(object):
     that leads to a significant degradation in image quality.
 
     It can be summarized in 6 steps:
-    1. Find all possible canvas combinations of max_num_chunks;
+    1. Find all possible canvas combinations of max_num_chunks; 2x2, 1x4, 4x1
     2. Find the best canvas to fit the image;
     3. Resize without distortion
     4. Pad
@@ -56,6 +56,33 @@ class VariableSizeImageTransform(object):
 
     The final output will therefore be of shape (8, 3, 224, 224), where 2x4
     patches are coming from the resizing and chunking.
+
+    #
+    # Assuming:
+    #   image_transform = VariableSizeImageTransform(size=560)
+    #   image = <PIL.Image.Image object at 0x...> with shape 1024 x 800
+    #
+    # Example 1. 
+    #   transformed_image = image_transform(
+    #       image=image,
+    #       max_num_chunks=4,
+    #       normalize_img=True,
+    #       resize_to_max_canvas=False
+    #   )
+    #   # transformed_image is a tuple (image_tensor, aspect_ratio), 
+    #   #   where image_tensor: A tensor of shape (4, 3, 560, 560) and aspect_ratio: The tuple (2, 2).
+    #
+    # Example 2.
+    #   transformed_image = image_transform(
+    #       image=image,
+    #       max_num_chunks=4,
+    #       normalize_img=True,
+    #       resize_to_max_canvas=True # <-- different from Example 1
+    #   )
+    #   # transformed_image is a tuple (image_tensor, aspect_ratio), 
+    #   #   where image_tensor: A tensor of shape (4, 3, 560, 560) and aspect_ratio: The tuple (2, 2).
+    #   #   But, the image is resized to the maximum canvas size without distortion.
+    #
     """
 
     def __init__(self, size: int = IMAGE_RES) -> None:
@@ -413,3 +440,5 @@ class VariableSizeImageTransform(object):
 
         ar = (ratio_h, ratio_w)
         return image, ar
+    # image: 4 x 3 x 560 x 560
+    # ar: (2, 2)

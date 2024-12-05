@@ -140,29 +140,33 @@ def resize_global_position_embedding(pos_and_cls_embed, grid_size, x_scale, y_sc
 
 
 def build_encoder_attention_mask(
-    x: torch.Tensor,
-    ar: torch.Tensor,
-    ntok: int,
-    num_chunks: int,
-    n_heads: int,
+    x: torch.Tensor,   # E.g., x.shape=(2, 4, 1608, 1280)
+    ar: torch.Tensor,  # E.g., ar.shape=(2, 2). E.g., ar= [[1, 2], [2, 2]]
+    ntok: int,         # E.g., ntok=1601. It means the number padding is 1608-1601=7.
+    num_chunks: int,   # E.g., num_chunks=4
+    n_heads: int,      # E.g., n_heads=1
 ):
     """
     Build vision encoder attention mask that omits padding tokens.
     """
     masks = []
     for arx in ar:
-        mask_i = torch.ones((num_chunks, x.shape[2], 1), dtype=x.dtype)
-        mask_i[: arx[0] * arx[1], :ntok] = 0
-        mask_i = mask_i.view(num_chunks * x.shape[2], -1)
-        mask_i = mask_i @ mask_i.T * get_negative_inf_value(x.dtype)
-        mask_i = mask_i.unsqueeze(0)
+        mask_i = torch.ones((num_chunks, x.shape[2], 1), dtype=x.dtype)  # (4, 1608, 1)
+        mask_i[: arx[0] * arx[1], :ntok] = 0  # When arx=[1, 2], mask_i[:2, :1601]=0; when arx=[2, 2], mask_i[:4, :1601]=0
+        mask_i = mask_i.view(num_chunks * x.shape[2], -1)             # mask_i.shape=(4*1608, 1)
+        mask_i = mask_i @ mask_i.T * get_negative_inf_value(x.dtype)  # mask_i.shape=(4*1608, 4*1608)
+        mask_i = mask_i.unsqueeze(0)  # mask_i.shape=(1, 4*1608, 4*1608)
         masks.append(mask_i)
-    masks = torch.stack(masks).to(x.device).expand(-1, n_heads, -1, -1)
+    # masks.shape=(2, 1, 4*1608, 4*1608)
+    masks = torch.stack(masks).to(x.device).expand(-1, n_heads, -1, -1)  # (2, 1, 4*1608, 4*1608)
     return masks
 
 
 def expand_num_tokens_to_mult8(x):
-    num_pad_tokens = 8 - (x.shape[-2] % 8)
+    """
+    E.g., x.shape: (2, 4, 1601, 1280)
+    """
+    num_pad_tokens = 8 - (x.shape[-2] % 8) # 7
     if num_pad_tokens == 0:
         return x, 0
     else:
@@ -177,12 +181,17 @@ def expand_num_tokens_to_mult8(x):
                     ),
                 ],
                 dim=-2,
-            ),
-            num_pad_tokens,
+            ),               # (2, 4, 1608, 1280)
+            num_pad_tokens,  # 7
         )
 
 
 def contract_num_tokens_from_mult8(x, num_pad_tokens):
+    """
+    Example:
+        x.shape=(2, 4, 1608, 1280)
+        num_pad_tokens=7
+    """
     if num_pad_tokens == 0:
         return x
-    return x[:, :, :-num_pad_tokens]
+    return x[:, :, :-num_pad_tokens]  # (2, 4, 1601, 1280)

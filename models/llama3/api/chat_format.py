@@ -48,13 +48,53 @@ class ChatFormat:
         tokens.extend(self.tokenizer.encode("\n\n", bos=False, eos=False))
         return tokens
 
+    # E.g., content = [ImageMedia(image=img), "If I had to write a haiku for this one"]
     def encode_content(self, content: InterleavedTextMedia) -> ModelInput:
         tokens, images = self._encode_content(content, bos=True)
         return self._model_input_from_tokens_images(tokens, images)
 
+    # E.g., content = [ImageMedia(image=img), "If I had to write a haiku for this one"]
     def _encode_content(
         self, content: InterleavedTextMedia, bos: bool = False
     ) -> Tuple[List[int], List[PIL_Image.Image]]:
+        """
+        Example 1. 
+            Given: content = [ImageMedia(image=img), "If I had to write a haiku for this one"] and bos = True
+            Assuming:
+                self.tokenizer.special_tokens["<|begin_of_text|>"] is 101.
+                self.vision_token is 102.
+                self.tokenizer.encode("If I had to write a haiku for this one", bos=False, eos=False) 
+                    returns [201, 202, 203, 204, 205, 206, 207, 208, 209].
+            Return: 
+                tokens = [101, 102, 201, 202, 203, 204, 205, 206, 207, 208, 209]
+                images = [<PIL.Image.Image object at 0x...>]  # The localized image
+        Example 2.
+            Given: 
+                content = [
+                    "This is a text.",
+                    ImageMedia(image=URL(uri="file:///path/to/image.jpg")),
+                    "Another text.",
+                    ImageMedia(image=URL(uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA..."))
+                ]
+                bos = True
+            Assuming:
+                self.tokenizer.special_tokens["<|begin_of_text|>"] is 101.
+                self.vision_token is 102.
+                self.tokenizer.encode("This is a text.", bos=True, eos=False) 
+                    returns [101, 201, 202, 203, 204, 205, 206, 207, 208, 209].
+                self.tokenizer.encode("Another text.", bos=False, eos=False) 
+                    returns [301, 302, 303, 304, 305, 306, 307, 308, 309].
+            Return:
+                tokens = [
+                    101, 201, 202, 203, 204, 205, 206, 207, 208, 209, 
+                    102, 
+                    301, 302, 303, 304, 305, 306, 307, 308, 309, 
+                    102
+                ]
+                images = [
+                    <PIL.Image.Image object at 0x...>, 
+                    <PIL.Image.Image object at 0x...>
+        """
         tokens = []
         images = []
 
@@ -214,6 +254,58 @@ class ChatFormat:
     def _model_input_from_tokens_images(
         self, tokens: List[int], images: List[PIL_Image.Image]
     ) -> ModelInput:
+        """
+        Example 1.
+            Assuming:
+                self.tokenizer.special_tokens["<|begin_of_text|>"] = 101.
+                self.vision_token = 102.
+                self.tokenizer.encode("If I had to write a haiku for this one", bos=False, eos=False) 
+                    = [201, 202, 203, 204, 205, 206, 207, 208, 209].
+            Inputs:
+                tokens = [101, 102, 201, 202, 203, 204, 205, 206, 207, 208, 209]
+                images = [<PIL.Image.Image object at 0x...>]  # The localized image
+            Return: ModelInput(
+                tokens=[101, 128256, 201, 202, 203, 204, 205, 206, 207, 208, 209],
+                vision=VisionInput(
+                    mask=[[1, -1]],
+                    images=[<PIL.Image.Image object at 0x...]
+                )
+            )
+        Example 2.
+            Assuming:
+                self.tokenizer.special_tokens["<|begin_of_text|>"] = 101.
+                self.vision_token = 102.
+                self.tokenizer.encode("This is a text.", bos=True, eos=False) 
+                    = [101, 201, 202, 203, 204, 205, 206, 207, 208, 209].
+                self.tokenizer.encode("Another text.", bos=False, eos=False) 
+                    = [301, 302, 303, 304, 305, 306, 307, 308, 309].
+            Inputs:
+                tokens = [
+                    101, 201, 202, 203, 204, 205, 206, 207, 208, 209, 
+                    102, 
+                    301, 302, 303, 304, 305, 306, 307, 308, 309, 
+                    102
+                ]
+                images = [
+                    <PIL.Image.Image object at 0x...>, 
+                    <PIL.Image.Image object at 0x...>
+                ]
+            Return: ModelInput(
+                tokens=[
+                    101, 201, 202, 203, 204, 205, 206, 207, 208, 209, 
+                    128256, 
+                    301, 302, 303, 304, 305, 306, 307, 308, 309, 
+                    128256
+                ],
+                vision=VisionInput(
+                    mask=[[10, 20], [20, 21]],
+                    images=[
+                        <PIL.Image.Image object at 0x...>, 
+                        <PIL.Image.Image object at 0x...>
+                    ]
+                )
+            )
+        """
         vision_input = None
         if len(images) > 0:
             vision_input = VisionInput(
@@ -228,11 +320,26 @@ class ChatFormat:
             vision=vision_input,
         )
 
-
 def create_vision_mask(
     tokens: List[int],
     vision_token: int,
 ) -> List[List[int]]:
+    """
+    Example 1:
+        Inputs:
+            tokens = [101, 102, 201, 202, 203, 204, 205, 206, 207, 208, 209]
+            vision_token = 102
+        Return: [[1, -1]]
+    Example 2:
+        Inputs:
+            tokens = [101, 201, 202, 203, 204, 205, 206, 207, 208, 209, 
+                102, 
+                301, 302, 303, 304, 305, 306, 307, 308, 309,
+                102
+            ]
+            vision_token = 102
+        Return: [[10, 20], [20, 21]]
+    """
     vision_token_locations = [
         i for i, token in enumerate(tokens) if token == vision_token
     ]

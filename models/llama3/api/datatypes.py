@@ -73,6 +73,49 @@ def interleaved_text_media_as_str(content: InterleavedTextMedia, sep: str = " ")
 def interleaved_text_media_localize(
     content: InterleavedTextMedia,
 ) -> InterleavedTextMedia:
+    """
+    Example 1. Single String
+        content = "This is a text."
+        localized_content = interleaved_text_media_localize(content)
+        print(localized_content)
+        # Output: "This is a text."
+    Example 2. Single ImageMedia with File URL
+        content = ImageMedia(image=URL(uri="file://path/to/image.jpg"))
+        localized_content = interleaved_text_media_localize(content)
+        print(localized_content)
+        # Output: ImageMedia(image=<PIL.Image.Image>)
+    Example 3. Single ImageMedia with Base64 Data
+        content = ImageMedia(image=URL(uri="data:image/jpeg;base64,..."))
+        localized_content = interleaved_text_media_localize(content)
+        print(localized_content)
+        # Output: ImageMedia(image=<PIL.Image.Image>)
+    Example 4. List of Mixed Content
+        content = [
+            "This is a text.", 
+            ImageMedia(image=URL(uri="file://path/to/image.jpg"))
+        ]
+        localized_content = interleaved_text_media_localize(content)
+        print(localized_content)
+        # Output: [
+        #     "This is a text.", 
+        #     ImageMedia(image=<PIL.Image.Image>)
+        # ]
+    Example 5. List of Mixed Content (2nd)
+        content = [
+            "This is a text.",
+            ImageMedia(image=URL(uri="file:///path/to/image.jpg")),
+            "Another text.",
+            ImageMedia(image=URL(uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA..."))
+        ]
+        localized_content = interleaved_text_media_localize(content)
+        print(localized_content)
+        # Output: [
+        #     "This is a text.",
+        #     ImageMedia(image=URL(uri="file:///path/to/image.jpg")),
+        #     "Another text.",
+        #     ImageMedia(image=URL(uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA..."))
+        # ] 
+    """
     def _localize_single(c: str | ImageMedia) -> str | ImageMedia:
         if isinstance(c, ImageMedia):
             # load image and return PIL version

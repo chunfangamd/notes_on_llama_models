@@ -9,6 +9,7 @@
 # This software may be used and distributed in accordance with the terms of the Llama 3 Community License Agreement.
 
 from typing import Optional
+import os
 
 import fire
 
@@ -20,6 +21,8 @@ from PIL import Image as PIL_Image
 from termcolor import cprint
 
 
+THIS_DIR = "/home/amd/chun/llama-models/llama_models/scripts/"
+
 def run_main(
     ckpt_dir: str,
     temperature: float = 0.6,
@@ -29,33 +32,39 @@ def run_main(
     max_gen_len: Optional[int] = None,
     model_parallel_size: Optional[int] = None,
 ):
+    # Model: the generator
     generator = Llama.build(
         ckpt_dir=ckpt_dir,
         max_seq_len=max_seq_len,
         max_batch_size=max_batch_size,
         model_parallel_size=model_parallel_size,
     )
-
-    with open(THIS_DIR / "resources/dog.jpg", "rb") as f:
+    # Data: the images
+    with open(os.path.join(THIS_DIR, "resources/dog.jpg"), "rb") as f:
         img = PIL_Image.open(f).convert("RGB")
 
-    with open(THIS_DIR / "resources/pasta.jpeg", "rb") as f:
-        img2 = PIL_Image.open(f).convert("RGB")
+    # with open(os.path.join(THIS_DIR, "resources/pasta.jpeg"), "rb") as f:
+    #     img2 = PIL_Image.open(f).convert("RGB")
 
     interleaved_contents = [
-        # text only
-        "The color of the sky is blue but sometimes it can also be",
-        # image understanding
+        # # Example 1. text only
+        # "The color of the sky is blue but sometimes it can also be",
+
+        # Example 2. image understanding
+        ########################################################################
+        # Remark. It seems that ImageMedia should always be the first element  #
+        #   in the list, otherwise it will not work as expected.               #
+        ########################################################################
         [
             ImageMedia(image=img),
             "If I had to write a haiku for this one",
         ],
     ]
-
+    # Inference
     for content in interleaved_contents:
         result = generator.text_completion(
             content,
-            max_gen_len=max_gen_len,
+            max_gen_len=max_gen_len,  # If it is None, this number will be set to 512 later
             temperature=temperature,
             top_p=top_p,
         )
